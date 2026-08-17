@@ -22,6 +22,8 @@ h1{margin:3px 0}.muted{color:#9aa8c7;font-size:13px}.online{color:#35d07f}.grid{
 .login-overlay{position:fixed;inset:0;background:linear-gradient(135deg,#080c18,#111a31);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1000}
 .login-card{width:min(420px,100%);background:#11182b;border:1px solid #26324e;border-radius:18px;padding:30px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
 .login-card h1{font-size:25px;margin:8px 0}.login-card input{width:100%;padding:13px 14px;margin:8px 0;background:#0a1020;color:#eef3ff;border:1px solid #344365;border-radius:10px;outline:none}.login-card input:focus{border-color:#5b8cff}.login-card .login-btn{width:100%;margin-top:12px}.login-msg{min-height:20px;color:#ff7b86;font-size:13px;margin-top:10px}.logout-btn{float:right;padding:8px 12px;border:1px solid #344365;background:#17213a;color:#eef3ff;border-radius:9px;cursor:pointer}
+.request-card{background:#1b2135;border:1px solid #ffc857;border-radius:14px;padding:18px;margin-bottom:18px;display:none}
+.request-card h2{margin-top:0}.approve{background:#35a86b}.reject{background:#d9535f}.request-id{font-size:12px;color:#9aa8c7}
 </style>
 </head>
 <body>
@@ -47,6 +49,14 @@ h1{margin:3px 0}.muted{color:#9aa8c7;font-size:13px}.online{color:#35d07f}.grid{
     <div><div class="muted">REMOTE SMART-LOCK DASHBOARD</div><h1>🔐 Smart OTP Door Lock</h1></div>
     <div><button class="logout-btn" onclick="logoutUser()">Logout</button><div class="online">● <span id="connection">Connecting...</span></div></div>
   </div>
+
+  <div id="requestCard" class="request-card">
+  <h2>🔔 OTP Request Received</h2>
+  <p>Someone pressed <b>A</b> on the Smart Door Lock and is requesting an OTP.</p>
+  <div id="requestIdText" class="request-id"></div>
+  <button class="btn approve" onclick="approveRequest()">✅ APPROVE & GENERATE OTP</button>
+  <button class="btn reject" onclick="rejectRequest()">❌ REJECT</button>
+</div>
 
   <div class="grid">
     <section class="card">
@@ -92,7 +102,7 @@ h1{margin:3px 0}.muted{color:#9aa8c7;font-size:13px}.online{color:#35d07f}.grid{
 /* ==============================
    PASTE YOUR SUPABASE VALUES HERE
    ============================== */
-const SUPABASE_URL = "https://blcpnclrcdkpgluhuvxl.supabase.co";
+const SUPABASE_URL = "https://blcpnclrcdkpglhuvxl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_XL-v9L_46rb1HNbOEwCHiw_2BTy8N-d";
 
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -133,29 +143,60 @@ function updateTimer(){
     document.getElementById("metricOtp").textContent="Expired";
     return;
   }
-  const s=Math.ceil(left/1000);
-  document.getElementById("timer").textContent=
-    `Valid for ${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+  const sec=Math.ceil(left/1000);
+  document.getElementById("timer").textContent=`Valid for ${Math.floor(sec/60)}:${String(sec%60).padStart(2,"0")}`;
+}
+let pendingRequest=null;
+function showRequest(row){
+  pendingRequest=row;
+  document.getElementById("requestIdText").textContent="Request ID: "+row.id;
+  document.getElementById("requestCard").style.display="block";
+  document.getElementById("timer").textContent="Waiting for your approval...";
+  document.getElementById("metricOtp").textContent="Pending approval";
+  addEvent("OTP request received. Waiting for approval.","OTP REQUEST");
+  toast("🔔 Someone is requesting an OTP.");
 }
 async function handleOtpRequest(row){
-  if(!row || row.id===lastRequestId) return;
-  if(row.event_type!=="OTP_REQUEST") return;
-  lastRequestId=row.id;
-
+  if(!row || row.event_type!=="OTP_REQUEST") return;
+  if(row.status && row.status!=="pending") return;
+  showRequest(row);
+}
+async function approveRequest(){
+  if(!pendingRequest) return;
   generateOtp();
-  addEvent("A button pressed on the ESP32. OTP generated automatically.","OTP REQUEST");
-  toast("🔔 OTP request received from the lock.");
-
-  // Prototype behavior: write the generated OTP back to the same request.
   const {error}=await db.from("door_control").update({
-    otp:otp,status:"otp_generated",
+    otp:otp,
+    status:"approved",
     expires_at:new Date(expiresAt).toISOString()
-  }).eq("id",row.id);
-
-  if(error) {
+  }).eq("id",pendingRequest.id);
+  if(error){
     console.error(error);
-    addEvent("OTP was generated locally, but Supabase update failed: "+error.message,"ERROR");
+    toast("Approval failed: "+error.message);
+    addEvent("Approval failed: "+error.message,"ERROR");
+    return;
   }
+  document.getElementById("requestCard").style.display="none";
+  addEvent("OTP approved and generated.","APPROVED");
+  toast("✅ OTP approved. Give the displayed OTP to the visitor.");
+  pendingRequest=null;
+}
+async function rejectRequest(){
+  if(!pendingRequest) return;
+  const {error}=await db.from("door_control").update({
+    status:"rejected"
+  }).eq("id",pendingRequest.id);
+  if(error){
+    console.error(error);
+    toast("Reject failed: "+error.message);
+    return;
+  }
+  document.getElementById("requestCard").style.display="none";
+  document.getElementById("otp").textContent="REJECTED";
+  document.getElementById("timer").textContent="OTP request rejected";
+  document.getElementById("metricOtp").textContent="Rejected";
+  addEvent("OTP request rejected.","REJECTED");
+  toast("❌ OTP request rejected.");
+  pendingRequest=null;
 }
 async function subscribe(){
   const channel=db.channel("door-control-live")
