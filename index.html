@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart OTP Door Lock</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#0b1020;color:#eef3ff}
+.wrap{max-width:1100px;margin:auto;padding:25px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+h1{margin:3px 0}.muted{color:#9aa8c7;font-size:13px}.online{color:#35d07f}.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px}
+.card{background:#11182b;border:1px solid #26324e;border-radius:16px;padding:22px}.full{grid-column:1/-1}
+.doorrow{display:flex;align-items:center;gap:25px}.door{width:90px;height:130px;background:#202b46;border:5px solid #7181a6;border-radius:8px;display:flex;justify-content:flex-end;align-items:center}.handle{width:8px;height:8px;background:#fff;border-radius:50%;margin-right:8px}
+.big{font-size:30px;font-weight:bold}.green{color:#35d07f}.red{color:#ff5c6c}.yellow{color:#ffc857}
+.otpbox{text-align:center;background:#0a1020;border:1px dashed #425277;border-radius:12px;padding:18px}.otp{font-size:38px;letter-spacing:8px;font-weight:bold;margin:10px}
+.btn{padding:13px 18px;border:0;border-radius:10px;color:#fff;font-weight:bold;cursor:pointer;margin:15px 8px 0 0;background:#5b8cff}.lock{background:#ff5c6c}.gray{background:#27334f}
+.event{padding:12px 0;border-bottom:1px solid #26324e;font-size:13px}.tag{display:inline-block;background:#223252;color:#bcd0ff;padding:4px 8px;border-radius:20px;font-size:11px}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.metric{background:#0d1426;border:1px solid #26324e;padding:15px;border-radius:10px}
+#setup{background:#251c08;border:1px solid #6b531b;padding:14px;border-radius:10px;margin-bottom:18px}.toast{position:fixed;right:20px;bottom:20px;background:#17213a;border:1px solid #344365;padding:14px;border-radius:10px;display:none}
+@media(max-width:750px){.grid{grid-template-columns:1fr}.full{grid-column:auto}.metrics{grid-template-columns:1fr}.top{display:block}}
+
+.login-overlay{position:fixed;inset:0;background:linear-gradient(135deg,#080c18,#111a31);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1000}
+.login-card{width:min(420px,100%);background:#11182b;border:1px solid #26324e;border-radius:18px;padding:30px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.login-card h1{font-size:25px;margin:8px 0}.login-card input{width:100%;padding:13px 14px;margin:8px 0;background:#0a1020;color:#eef3ff;border:1px solid #344365;border-radius:10px;outline:none}.login-card input:focus{border-color:#5b8cff}.login-card .login-btn{width:100%;margin-top:12px}.login-msg{min-height:20px;color:#ff7b86;font-size:13px;margin-top:10px}.logout-btn{float:right;padding:8px 12px;border:1px solid #344365;background:#17213a;color:#eef3ff;border-radius:9px;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="loginOverlay" class="login-overlay">
+  <div class="login-card">
+    <div class="muted">AUTHORIZED ACCESS</div>
+    <h1>🔐 Smart OTP Door Lock</h1>
+    <p class="muted">Sign in to access the remote lock dashboard.</p>
+    <input id="loginEmail" type="email" placeholder="Email address" autocomplete="email">
+    <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="btn login-btn" onclick="loginUser()">LOGIN</button>
+    <div id="loginMsg" class="login-msg"></div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div id="setup">
+    <b>First-time setup:</b> open this HTML file in a text editor and replace the two values marked
+    <code>YOUR_PROJECT_URL</code> and <code>YOUR_PUBLISHABLE_KEY</code>. Do not put a secret key here.
+  </div>
+
+  <div class="top">
+    <div><div class="muted">REMOTE SMART-LOCK DASHBOARD</div><h1>🔐 Smart OTP Door Lock</h1></div>
+    <div><button class="logout-btn" onclick="logoutUser()">Logout</button><div class="online">● <span id="connection">Connecting...</span></div></div>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>🚪 Main Door</h2>
+      <div class="doorrow">
+        <div class="door"><span class="handle"></span></div>
+        <div>
+          <div id="doorStatus" class="big red">LOCKED</div>
+          <div id="servo" class="muted">Servo position: 0°</div>
+          <div class="muted">ESP32-WROOM-32</div>
+        </div>
+      </div>
+      <button class="btn lock" onclick="sendLock()">🔒 LOCK DOOR</button>
+    </section>
+
+    <section class="card">
+      <h2>🔑 Current OTP</h2>
+      <div class="otpbox">
+        <div class="muted">OTP REQUESTED BY LOCK</div>
+        <div id="otp" class="otp">------</div>
+        <div id="timer" class="yellow">Waiting for A...</div>
+      </div>
+    </section>
+
+    <section class="card full">
+      <h2>📊 Status</h2>
+      <div class="metrics">
+        <div class="metric"><span class="muted">Door</span><br><b id="metricDoor">🔒 Locked</b></div>
+        <div class="metric"><span class="muted">OTP</span><br><b id="metricOtp">Waiting</b></div>
+        <div class="metric"><span class="muted">Cloud</span><br><b id="metricCloud">Connecting...</b></div>
+      </div>
+    </section>
+
+    <section class="card full">
+      <h2>📝 Activity</h2>
+      <div id="events"><div class="event"><span class="tag">SYSTEM</span><br>Dashboard started.</div></div>
+    </section>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+/* ==============================
+   PASTE YOUR SUPABASE VALUES HERE
+   ============================== */
+const SUPABASE_URL = "https://blcpnclrcdkpgluhuvxl.supabase.co";
+const SUPABASE_KEY = "sb_publishable_XL-v9L_46rb1HNbOEwCHiw_2BTy8N-d";
+
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let otp = null;
+let expiresAt = 0;
+let timerId = null;
+let lastRequestId = null;
+
+function toast(msg){
+  const t=document.getElementById("toast");
+  t.textContent=msg;t.style.display="block";
+  clearTimeout(t._timer);t._timer=setTimeout(()=>t.style.display="none",3500);
+}
+function addEvent(msg,tag="SYSTEM"){
+  const e=document.createElement("div");
+  e.className="event";
+  e.innerHTML=`<span class="tag">${tag}</span><br>${msg}`;
+  document.getElementById("events").prepend(e);
+}
+function setConnection(ok){
+  document.getElementById("connection").textContent=ok?"SUPABASE CONNECTED":"SUPABASE ERROR";
+  document.getElementById("metricCloud").textContent=ok?"🟢 Connected":"🔴 Error";
+}
+function generateOtp(){
+  otp=String(Math.floor(100000+Math.random()*900000));
+  expiresAt=Date.now()+120000;
+  document.getElementById("otp").textContent=otp;
+  document.getElementById("metricOtp").textContent="Active";
+  clearInterval(timerId);timerId=setInterval(updateTimer,1000);updateTimer();
+}
+function updateTimer(){
+  const left=Math.max(0,expiresAt-Date.now());
+  if(!left){
+    clearInterval(timerId);otp=null;
+    document.getElementById("otp").textContent="EXPIRED";
+    document.getElementById("timer").textContent="OTP expired";
+    document.getElementById("metricOtp").textContent="Expired";
+    return;
+  }
+  const s=Math.ceil(left/1000);
+  document.getElementById("timer").textContent=
+    `Valid for ${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+}
+async function handleOtpRequest(row){
+  if(!row || row.id===lastRequestId) return;
+  if(row.event_type!=="OTP_REQUEST") return;
+  lastRequestId=row.id;
+
+  generateOtp();
+  addEvent("A button pressed on the ESP32. OTP generated automatically.","OTP REQUEST");
+  toast("🔔 OTP request received from the lock.");
+
+  // Prototype behavior: write the generated OTP back to the same request.
+  const {error}=await db.from("door_control").update({
+    otp:otp,status:"otp_generated",
+    expires_at:new Date(expiresAt).toISOString()
+  }).eq("id",row.id);
+
+  if(error) {
+    console.error(error);
+    addEvent("OTP was generated locally, but Supabase update failed: "+error.message,"ERROR");
+  }
+}
+async function subscribe(){
+  const channel=db.channel("door-control-live")
+    .on("postgres_changes",
+      {event:"INSERT",schema:"public",table:"door_control"},
+      payload=>handleOtpRequest(payload.new))
+    .on("postgres_changes",
+      {event:"UPDATE",schema:"public",table:"door_control"},
+      payload=>handleCommand(payload.new))
+    .subscribe(status=>{
+      if(status==="SUBSCRIBED"){
+        setConnection(true);
+        addEvent("Realtime connection established.","CLOUD");
+      }else if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"){
+        setConnection(false);
+      }
+    });
+}
+async function handleCommand(row){
+  if(row.command!=="LOCK") return;
+  setDoorLocked();
+}
+async function sendLock(){
+  const {error}=await db.from("door_control").insert({
+    event_type:"WEB_COMMAND",command:"LOCK",status:"requested"
+  });
+  if(error){
+    console.error(error);toast("Lock command failed: "+error.message);
+    addEvent("LOCK command failed: "+error.message,"ERROR");
+    return;
+  }
+  setDoorLocked();
+}
+function setDoorLocked(){
+  document.getElementById("doorStatus").textContent="LOCKED";
+  document.getElementById("doorStatus").className="big red";
+  document.getElementById("servo").textContent="Servo position: 0°";
+  document.getElementById("metricDoor").textContent="🔒 Locked";
+  addEvent("LOCK command sent. Door should move to 0°.","LOCK");
+  toast("🔒 LOCK command sent.");
+}
+
+async function checkAuth(){
+  const {data:{session}} = await db.auth.getSession();
+  if(session){
+    document.getElementById("loginOverlay").style.display="none";
+    document.getElementById("loginEmail").value="";
+    document.getElementById("loginPassword").value="";
+    initialTest();
+  }else{
+    document.getElementById("loginOverlay").style.display="flex";
+    document.getElementById("connection").textContent="LOGIN REQUIRED";
+    document.getElementById("metricCloud").textContent="🔒 Locked";
+  }
+}
+async function loginUser(){
+  const email=document.getElementById("loginEmail").value.trim();
+  const password=document.getElementById("loginPassword").value;
+  const msg=document.getElementById("loginMsg");
+  msg.textContent="";
+  if(!email || !password){msg.textContent="Enter your email and password.";return;}
+  const {error}=await db.auth.signInWithPassword({email,password});
+  if(error){msg.textContent=error.message;return;}
+  document.getElementById("loginOverlay").style.display="none";
+  addEvent("Authenticated user signed in.","AUTH");
+  initialTest();
+}
+async function logoutUser(){
+  await db.auth.signOut();
+  location.reload();
+}
+
+async function initialTest(){
+  if(SUPABASE_URL==="YOUR_PROJECT_URL" || SUPABASE_KEY==="YOUR_PUBLISHABLE_KEY"){
+    setConnection(false);
+    return;
+  }
+  const {error}=await db.from("door_control").select("id").limit(1);
+  if(error){
+    setConnection(false);
+    addEvent("Supabase connection error: "+error.message,"ERROR");
+    return;
+  }
+  setConnection(true);
+  subscribe();
+}
+checkAuth();
+</script>
+</body>
+</html>
